@@ -10,13 +10,30 @@
     "fastboot": "C:/adb-tools/fastboot.exe"
   },
   "images": {
-    "vbmeta_a": "C:/SalahOS/frame-backup/vbmeta_a_noverity.img",
-    "product": "C:/SalahOS/prod-image/product_a_salahos-dev6.img",
-    "stock_product": "C:/SalahOS/prod-image/product_a_stock.img"
+    "product": "C:/SalahOS/prod-image/product_a_salahos-dev7.img",
+    "stock_product": "C:/SalahOS/prod-image/product_a_stock.img",
+    "env_new": "images/env_bl255.img",
+    "bootlogo_patch": "images/bootlogo.patch.json"
   },
-  "flashVendor": false,
   "verifyAfter": true,
   "drivers": {
-    "required": true
-  }
+    "required": false
+  },
+  "reference": {
+    "knownProducts": [
+      {
+        "sha": "3a672d491dd6552ce766fc43397972cd745d88345d3f45d3464e32fcd872dea7",
+        "blocks": 34709
+      },
+      {
+        "sha": "154cc742f97708cdd3c999c75df5e57376a51e07129ffcd46b1679bf87e3378f",
+        "blocks": 34726
+      },
+      {
+        "sha": "99e378102aec38ec732b42a69a5198399957f47dd9145bbc84a043fb9b9a0ba4",
+        "blocks": 34725
+      }
+    ]
+  },
+  "resetAfterFlash": false
 }

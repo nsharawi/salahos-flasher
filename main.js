@@ -94,28 +94,26 @@ async function preflight(serial) {
   log(`preflight: reading ${serial}`);
   const fp     = await getprop(serial, 'ro.build.fingerprint');
   const board  = await getprop(serial, 'ro.product.name');
-  const unlock = await getprop(serial, 'sys.oem_unlock_allowed');
+  const root   = (await run(ADB, ['-s', serial, 'shell', 'id', '-u'])).out.trim();
 
   const checks = [
     { id: 'board',  label: 'Board matches',         value: board || '(unknown)', pass: board === CONFIG.golden.board },
     { id: 'fp',     label: 'Firmware matches',      value: fp   || '(unknown)',  pass: fp === CONFIG.golden.fingerprint },
-    { id: 'unlock', label: 'OEM unlocking enabled', value: unlock === '1' ? 'yes' : (unlock || 'unknown'), pass: unlock === '1' }
+    { id: 'unlock', label: 'Full access over USB',  value: root === '0' ? 'yes' : 'no', pass: root === '0' }
   ];
   checks.forEach(c => log(`preflight: ${c.label}: ${c.value}  ${c.pass ? 'OK' : 'FAIL'}`));
 
-  // Board + firmware gate flashing. OEM-unlock is reported but (in this test build) is a
-  // warning, since unlock-on-stock is still unproven — Phase A on the boxed frame settles it.
   const pm = await run(ADB, ['-s', serial, 'shell', 'pm', 'path', 'com.paltech.salahos']);
   isRma = !pm.err && /\/product\/app\/SalahOS\//.test(pm.out);
   log(`preflight: ${isRma ? 'this frame already runs the Salah OS image — returned frame' : 'new frame'}`);
-  const gate = checks[0].pass && checks[1].pass;
+  const gate = checks[0].pass && checks[1].pass && checks[2].pass;
   if (gate) {
     setState('READY', { checks, rma: isRma, serial });
   } else {
     let reason;
     if (!checks[1].pass) reason = 'Firmware version does not match the verified build — likely a different batch. Set the unit aside and report its version before flashing.';
     else if (!checks[0].pass) reason = 'This board is not the supported model (expected ceres_b3).';
-    else reason = 'Frame failed preflight.';
+    else reason = 'This frame does not give the flasher full access over USB.';
     setState('BLOCKED', { checks, reason, serial });
   }
 }
@@ -125,11 +123,10 @@ async function preflight(serial) {
 const IMG = (k) => CONFIG.images[k] || '(image not set)';
 function planRma(serial) {
   return [
-    { label: 'Reading this unit...',        to: 10, cmds: [`${ADB} -s ${serial} shell getprop  (serial, versions before)`] },
-    { label: 'Writing boot logo...',        to: 30, cmds: [`${ADB} -s ${serial} reboot bootloader`, `${FB} flash bootloader_a  ${IMG('bootloader_a')}`, `${FB} flash env_a  ${IMG('env_a')}`] },
-    { label: 'Installing Salah OS...',      to: 65, cmds: [`${FB} reboot fastboot`, `${FB} flash product  ${IMG('product')}`] },
-    { label: 'Erasing customer data...',    to: 80, cmds: [`${FB} -w   (erase userdata and metadata)`, `${FB} flash misc  <2048 zero bytes: clears the restart flag only>`] },
-    { label: 'Restarting...',               to: 92, cmds: [`${FB} reboot`] },
+    { label: 'Reading this unit...',        to: 12, cmds: ['check access, layout and verified-boot facts; copy this unit\'s boot partitions to the PC'] },
+    { label: 'Installing Salah OS...',      to: 50, cmds: [`write ${IMG('product')} into its place inside super; read it back`] },
+    { label: 'Writing boot logo...',        to: 62, cmds: ['boot pictures and backlight line: written only if not already in place; read back'] },
+    { label: 'Erasing customer data...',    to: 80, cmds: ['factory reset (the frame restarts and erases itself)'] },
     { label: 'Checking...',                 to: 100, cmds: ['wait for the frame; confirm Salah OS is home and owns the device'] }
   ];
 }
@@ -148,127 +145,206 @@ function record(serial, kind, result, extra) {
 function planFor(serial) {
   if (isRma) return planRma(serial);
   return [
-    { label: 'Backing up this unit...',    to: 15, cmds: [`${ADB} -s ${serial} shell dd if=/dev/block/by-name/{boot_a,init_boot_a,vendor_boot_a,vbmeta_a,misc,dtbo_a}  ->  backups/${serial}-<ts>/`] },
-    { label: 'Unlocking bootloader...',    to: 35, cmds: [`${ADB} -s ${serial} reboot bootloader`, `${FB} flashing unlock   (UNPROVEN on stock — Phase A)`] },
-    { label: 'Writing boot settings...',   to: 50, cmds: [`${FB} flash vbmeta_a  ${CONFIG.images.vbmeta_a || '(image not set)'}`] },
-    { label: 'Writing boot logo...',       to: 60, cmds: [`${FB} flash bootloader_a  ${IMG('bootloader_a')}`, `${FB} flash env_a  ${IMG('env_a')}`] },
-    { label: 'Installing Salah OS image...', to: 85, cmds: [`${FB} reboot fastboot`, `${FB} flash product  ${CONFIG.images.product || '(image not set)'}`, `${FB} flash misc  <2048 zero bytes: clears the restart flag only>`] },
-    { label: 'Rebooting frame...',         to: 95, cmds: [`${FB} reboot`] },
-    { label: 'Verifying installation...',  to: 100, cmds: [`${ADB} -s ${serial} shell pm path com.paltech.salahos`] }
+    { label: 'Backing up this unit...',      to: 15, cmds: ['check access, layout and verified-boot facts; copy this unit\'s boot partitions to the PC'] },
+    { label: 'Installing Salah OS image...', to: 55, cmds: [`write ${IMG('product')} into its place inside super; read it back`] },
+    { label: 'Writing boot logo...',         to: 65, cmds: ['replace the two boot pictures inside this unit\'s own bootloader partition; read it back'] },
+    { label: 'Writing boot settings...',     to: 75, cmds: [`write ${IMG('env_new')} (steady backlight); read it back`] },
+    { label: 'Rebooting frame...',           to: 90, cmds: [`${ADB} -s ${serial} reboot`] },
+    { label: 'Verifying installation...',    to: 100, cmds: ['read the frame\'s own setup log; confirm Salah OS is home and owns the device'] }
   ];
 }
 
 
 // ---- live flashing ----------------------------------------------------------
-// One frame at a time, so fastboot is used without a serial (the frame's fastboot serial is not
-// always its adb serial). Every restart into another mode is waited for; nothing is assumed.
+// A stock frame of this firmware gives a root shell over USB debugging, and only its system partition is
+// under verified boot. So a unit is made with three verified writes over adb, with no unlock, no wipe and
+// no fastboot: the product image (into its place inside super), the two boot pictures (inside the unit's
+// own bootloader partition) and the backlight line (env). Everything is checked first, then written, then
+// read back; the unit's originals are kept so every write can be undone.
+const crypto = require('crypto');
+const { spawn } = require('child_process');
+const REF = Object.assign({
+  super: '/dev/block/by-name/super',
+  productTable: '0-279864: linear, 179:11 1918976', productSeek: 239872, productBlocks: 34983,
+  stockProduct: 'd1fd5daa2f0a340f04a2e8d1bfe45ef4b2950c69e9defc60608c1a8ea43cb3f3',
+  stockEnv: 'e7ed37ab8da0b4b5b0e25673d35924694a1592fe447c243949e88658d5475149',
+  knownProducts: []          // [{ sha, blocks }] earlier Salah OS images a frame may already carry
+}, CONFIG.reference || {});
 const imgPath = (k) => { const v = CONFIG.images[k]; return v ? (path.isAbsolute(v) ? v : path.join(RES, v)) : ''; };
-function needImages(keys) { const miss = keys.filter(k => !imgPath(k) || !fs.existsSync(imgPath(k))); if (miss.length) throw new Error('These images are not set or not found: ' + miss.join(', ') + '. Nothing was changed.'); }
+function needImages(keys) { const miss = keys.filter(k => !imgPath(k) || !fs.existsSync(imgPath(k))); if (miss.length) throw new Error('These files are not set or not found: ' + miss.join(', ') + '. Nothing was changed.'); }
 function tail(r) { return ((r.errout || '') + '\n' + (r.out || '')).trim().split('\n').slice(-2).join(' | '); }
-async function fb(args, timeout = 300000) { const r = await run(FB, args, timeout); log(`   fastboot ${args.join(' ')}  ->  ${tail(r) || 'ok'}`); return r; }
-async function fbOk(args, what, timeout) { const r = await fb(args, timeout); if (r.err || /FAILED|error:/i.test(r.errout + r.out)) throw new Error(what + ' failed: ' + tail(r)); return r; }
 async function waitFor(fn, ms, every = 1500) { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await sleep(every); } return false; }
-async function fbMode() { const d = await fastbootDevices(); if (!d.length) return null; const r = await run(FB, ['getvar', 'is-userspace']); return /is-userspace:\s*yes/i.test(r.out + r.errout) ? 'fastbootd' : 'bootloader'; }
-async function fbVar(name) { const r = await run(FB, ['getvar', name]); const m = (r.out + '\n' + r.errout).match(new RegExp(name + ':\\s*(\\S+)', 'i')); return m ? m[1] : ''; }
 const step = (pct, label) => { send('progress', { pct, label }); log('step: ' + label); };
-
-// After flashing mode the frame must be told to start normally. That flag lives in the first 2048 bytes of
-// the misc partition. Writing 2048 zero bytes clears it and touches nothing after it, so no other unit's
-// misc contents are ever copied onto this frame.
-function bcbClearFile() { const f = path.join(DATA, 'work', 'bcb-clear.bin'); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.alloc(2048)); return f; }
-
-async function toBootloader(serial) {
-  log('   adb reboot bootloader');
-  await run(ADB, ['-s', serial, 'reboot', 'bootloader']);
-  if (!(await waitFor(async () => (await fbMode()) === 'bootloader', 90000))) throw new Error('The frame restarted but did not appear in bootloader mode on this computer. Nothing was written. Unplug the frame\'s power for a few seconds to start it normally.');
+const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+function shaFile(f) { return new Promise((res, rej) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', d => h.update(d)).on('end', () => res(h.digest('hex'))).on('error', rej); }); }
+async function sh(serial, cmd, timeout = 300000) { const r = await run(ADB, ['-s', serial, 'shell', cmd], timeout); return ((r.out || '') + '').replace(/\r/g, '').trim(); }
+async function devSha(serial, expr) { return (await sh(serial, expr + ' | sha256sum')).slice(0, 64); }
+const regionSha = (serial, blocks) => devSha(serial, `dd if=${REF.super} bs=4096 skip=${REF.productSeek} count=${blocks} 2>/dev/null`);
+const partSha = (serial, p) => devSha(serial, `cat /dev/block/by-name/${p}`);
+function pull(serial, devCmd, file) {
+  return new Promise((res, rej) => {
+    const o = fs.createWriteStream(file); const c = spawn(ADB, ['-s', serial, 'exec-out', devCmd], { windowsHide: true });
+    c.stdout.pipe(o); c.on('error', rej);
+    o.on('finish', () => res()); c.on('close', (code) => { if (code) rej(new Error('Reading from the frame failed (adb exit ' + code + ').')); });
+  });
 }
-async function toFastbootd() {
-  await fb(['reboot', 'fastboot'], 30000);
-  if (!(await waitFor(async () => (await fbMode()) === 'fastbootd', 120000))) throw new Error('The frame did not appear in flashing mode (fastbootd) on this computer. The system image was not written.');
-}
-async function unlock() {
-  let u = await fbVar('unlocked'); log('   bootloader unlocked: ' + (u || 'unknown'));
-  if (/yes|true/i.test(u)) return;
-  let r = await fb(['flashing', 'unlock'], 120000);
-  if (r.err || /FAILED/i.test(r.errout + r.out)) r = await fb(['oem', 'unlock'], 120000);
-  // The frame may ask for a confirmation on its own screen, and may restart itself afterwards.
-  setState('CONFIRM', { confirm: 'If the frame shows a question about unlocking, answer Yes on the frame. Waiting…', serial: lastSerial });
-  const ok = await waitFor(async () => /yes|true/i.test(await fbVar('unlocked')), 180000, 2500);
-  setState('FLASHING');
-  if (!ok) throw new Error('The bootloader did not unlock (' + (tail(r) || 'no answer') + '). Nothing was written. The frame can be unplugged and restarted; it still has its original software.');
-}
-async function verifyBoot(serial) {
-  // A dev image turns USB debugging back on, so the flasher can read the result. A shipping image does not.
-  const up = await waitFor(async () => { const d = await adbDevices(); return d.some(x => x.st === 'device'); }, 360000, 3000);
-  if (!up) return { seen: false };
-  const s2 = (await adbDevices()).find(x => x.st === 'device').serial;
-  await waitFor(async () => (await getprop(s2, 'sys.boot_completed')) === '1', 180000, 3000);
-  await sleep(45000);
-  const pm = await run(ADB, ['-s', s2, 'shell', 'pm', 'path', 'com.paltech.salahos']);
-  const lg = await run(ADB, ['-s', s2, 'shell', 'cat', '/data/local/tmp/salahos-setup.log']);
-  (lg.out || '(no setup log readable)').split('\n').slice(-16).forEach(l => log('   frame: ' + l));
-  const home = await run(ADB, ['-s', s2, 'shell', 'cmd', 'package', 'resolve-activity', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.HOME']);
-  return { seen: true, serial: s2, app: /\/product\/app\/SalahOS\//.test(pm.out), setupDone: /\bdone\s*$/m.test(lg.out || ''), home: /com\.paltech\.salahos/.test(home.out) };
+async function push(serial, file, dst, want) {
+  const r = await run(ADB, ['-s', serial, 'push', file, dst], 900000);
+  if (r.err) throw new Error('Copying to the frame failed: ' + tail(r));
+  if (want && (await devSha(serial, 'cat ' + dst)) !== want) throw new Error('A file copied to the frame does not match (' + path.basename(file) + '). Nothing was changed.');
 }
 
-async function liveNew(serial) {
-  needImages(['vbmeta_a', 'product']);
-  step(5, 'Backing up this unit...');
-  const info = {}; for (const p of ['ro.build.fingerprint', 'ro.serialno', 'ro.boot.slot_suffix', 'ro.boot.verifiedbootstate', 'ro.boot.flash.locked']) info[p] = await getprop(serial, p);
-  const bdir = path.join(DATA, 'backups', serial + '-' + new Date().toISOString().replace(/[:.]/g, '-')); fs.mkdirSync(bdir, { recursive: true });
-  fs.writeFileSync(path.join(bdir, 'info.json'), JSON.stringify(info, null, 1));
-  log('   this unit: ' + JSON.stringify(info));
-  log('   note: a stock frame gives no root, so its partitions cannot be copied off; the golden backup of this exact firmware is what Restore uses.');
-  if (info['ro.boot.slot_suffix'] && info['ro.boot.slot_suffix'] !== '_a') throw new Error('This frame runs from slot ' + info['ro.boot.slot_suffix'] + ', not _a. The images are for slot _a. Nothing was changed.');
-
-  step(18, 'Unlocking bootloader...');
-  await toBootloader(serial);
-  await unlock();
-
-  step(40, 'Writing boot settings...');
-  await fbOk(['flash', 'vbmeta_a', imgPath('vbmeta_a')], 'Writing boot settings');
-
-  step(55, 'Installing Salah OS image...');
-  await toFastbootd();
-  await fbOk(['flash', 'product', imgPath('product')], 'Installing the Salah OS image', 600000);
-  await fbOk(['flash', 'misc', bcbClearFile()], 'Clearing the restart flag');
-
-  step(88, 'Rebooting frame...');
-  await fb(['reboot'], 30000);
-
-  step(94, 'Verifying installation...');
-  return verifyBoot(serial);
+// The boot pictures: the patch lists the byte ranges the two pictures occupy in a stock bootloader partition,
+// what must be there now, and what goes there. Only those ranges change; the rest stays this unit's own.
+function patchBootloader(buf, patch) {
+  if (buf.length !== patch.size) return { ok: false, why: 'partition size differs' };
+  let already = 0;
+  for (const r of patch.ranges) {
+    const cur = sha(buf.subarray(r.off, r.off + r.len)), neu = Buffer.from(r.new, 'base64');
+    if (cur === sha(neu)) { already++; continue; }
+    if (cur !== r.old) return { ok: false, why: 'the pictures are not where a stock frame keeps them (offset ' + r.off + ')' };
+    neu.copy(buf, r.off);
+  }
+  return { ok: true, already: already === patch.ranges.length };
 }
 
-async function liveRma(serial) {
-  needImages(['product']);
-  step(8, 'Reading this unit...');
-  const before = (await run(ADB, ['-s', serial, 'shell', 'dumpsys', 'package', 'com.paltech.salahos'])).out.match(/versionName=\S+/g) || [];
-  log('   before: ' + before.join(', '));
-  step(25, 'Installing Salah OS...');
-  await run(ADB, ['-s', serial, 'reboot', 'fastboot']); log('   adb reboot fastboot');
-  if (!(await waitFor(async () => (await fbMode()) === 'fastbootd', 120000))) throw new Error('The frame did not appear in flashing mode (fastbootd) on this computer. Nothing was written.');
-  await fbOk(['flash', 'product', imgPath('product')], 'Installing the Salah OS image', 600000);
-  await fbOk(['flash', 'misc', bcbClearFile()], 'Clearing the restart flag');
-  step(60, 'Restarting...');
-  await fb(['reboot'], 30000);
+async function unitBackupDir(serial) { const d = path.join(DATA, 'backups', serial); fs.mkdirSync(d, { recursive: true }); return d; }
+
+async function liveFlash(serial, rma) {
+  needImages(['product', 'stock_product', 'env_new', 'bootlogo_patch']);
+  // ---- look, and decide everything, before anything is written
+  step(4, 'Backing up this unit...');
+  if ((await sh(serial, 'id -u')) !== '0') throw new Error('This frame does not give full access over USB. Nothing was changed.');
+  if (!(await sh(serial, 'dmctl table product_a | tail -1')).includes(REF.productTable)) throw new Error('This frame\'s storage layout is not the one the image was built for. Nothing was changed.');
+  if ((await sh(serial, "grep -E '^product' /vendor/etc/fstab.sun50iw10p1 | grep -c avb")) !== '0') throw new Error('On this frame the product partition is under verified boot. Nothing was changed.');
+  if ((await getprop(serial, 'ro.boot.slot_suffix')) !== '_a') throw new Error('This frame does not run from slot _a. Nothing was changed.');
+  const newFile = imgPath('product'), newSha = await shaFile(newFile), newBlocks = fs.statSync(newFile).size / 4096;
+  if (!Number.isInteger(newBlocks) || newBlocks > REF.productBlocks) throw new Error('The Salah OS image has the wrong size. Nothing was changed.');
+  if ((await shaFile(imgPath('stock_product'))) !== REF.stockProduct) throw new Error('The original image kept for undo is not the right file. Nothing was changed.');
+
+  let have = null;
+  if ((await regionSha(serial, REF.productBlocks)) === REF.stockProduct) have = 'stock';
+  else for (const k of [{ sha: newSha, blocks: newBlocks }].concat(REF.knownProducts)) if ((await regionSha(serial, k.blocks)) === k.sha) { have = k.sha === newSha ? 'current' : 'earlier Salah OS'; break; }
+  if (!have) throw new Error('This frame carries a system image the flasher does not recognise. Nothing was changed.');
+  log('   system image on the frame now: ' + have);
+
+  const bdir = await unitBackupDir(serial);
+  const blFile = path.join(bdir, 'bootloader_a.now.img'), envFile = path.join(bdir, 'env_a.now.img');
+  await pull(serial, 'dd if=/dev/block/by-name/bootloader_a 2>/dev/null', blFile);
+  await pull(serial, 'dd if=/dev/block/by-name/env_a 2>/dev/null', envFile);
+  const bl = fs.readFileSync(blFile), env = fs.readFileSync(envFile);
+  if (sha(bl) !== (await partSha(serial, 'bootloader_a')) || sha(env) !== (await partSha(serial, 'env_a'))) throw new Error('The copy of this unit\'s boot partitions does not match the frame. Nothing was changed.');
+  // the first copy ever taken of a unit is its original; later runs must not overwrite it
+  for (const [f, b] of [['bootloader_a.original.img', bl], ['env_a.original.img', env]]) if (!fs.existsSync(path.join(bdir, f))) fs.writeFileSync(path.join(bdir, f), b);
+  fs.writeFileSync(path.join(bdir, 'info.json'), JSON.stringify({ serial, at: new Date().toISOString(), had: have, fingerprint: await getprop(serial, 'ro.build.fingerprint') }, null, 1));
+
+  const patch = JSON.parse(fs.readFileSync(imgPath('bootlogo_patch'), 'utf8'));
+  const blNew = Buffer.from(bl), pr = patchBootloader(blNew, patch);
+  if (!pr.ok) throw new Error('Boot logo: ' + pr.why + '. Nothing was changed.');
+  const envNew = fs.readFileSync(imgPath('env_new')), envSha = sha(env);
+  const envTodo = envSha === sha(envNew) ? 'already' : envSha === REF.stockEnv ? 'write' : null;
+  if (!envTodo) throw new Error('This frame\'s boot settings are not the stock ones the flasher knows. Nothing was changed.');
+  log(`   plan: system image ${have === 'current' ? 'already current' : 'write'}; boot logo ${pr.already ? 'already in place' : 'write'}; backlight ${envTodo === 'already' ? 'already in place' : 'write'}`);
+
+  // ---- copy to the frame and check the copies
+  step(20, 'Installing Salah OS image...');
+  const T = '/data/local/tmp/';
+  await push(serial, imgPath('stock_product'), T + 'prod-stock.img', REF.stockProduct);
+  if (have !== 'current') await push(serial, newFile, T + 'prod-new.img', newSha);
+  const blNewFile = path.join(bdir, 'bootloader_a.new.img'); fs.writeFileSync(blNewFile, blNew);
+  await push(serial, path.join(bdir, 'bootloader_a.original.img'), T + 'bl.orig.img');
+  await push(serial, path.join(bdir, 'env_a.original.img'), T + 'env.orig.img');
+  if (!pr.already) await push(serial, blNewFile, T + 'bl.new.img', sha(blNew));
+  if (envTodo === 'write') await push(serial, imgPath('env_new'), T + 'env.new.img', sha(envNew));
+
+  // ---- write, and read each one back
+  const dd = `bs=4096 seek=${REF.productSeek} conv=notrunc`;
+  if (have !== 'current') {
+    await sh(serial, `dd if=${T}prod-new.img of=${REF.super} ${dd} 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
+    if ((await regionSha(serial, newBlocks)) !== newSha) { await undo(serial); throw new Error('The system image did not read back correctly. The frame\'s previous state was written back.'); }
+    log('   system image written and read back');
+  }
+  step(55, 'Writing boot logo...');
+  if (!pr.already) {
+    await sh(serial, `dd if=${T}bl.new.img of=/dev/block/by-name/bootloader_a bs=1048576 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
+    if ((await partSha(serial, 'bootloader_a')) !== sha(blNew)) { await undo(serial); throw new Error('The boot logo did not read back correctly. The frame\'s previous state was written back.'); }
+    log('   boot logo written and read back');
+  }
+  step(65, 'Writing boot settings...');
+  if (envTodo === 'write') {
+    await sh(serial, `dd if=${T}env.new.img of=/dev/block/by-name/env_a bs=4096 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
+    if ((await partSha(serial, 'env_a')) !== sha(envNew)) { await undo(serial); throw new Error('The boot settings did not read back correctly. The frame\'s previous state was written back.'); }
+    log('   backlight setting written and read back');
+  }
+
+  // ---- restart (a returned frame is erased on the way), then see what came up
+  if (rma || CONFIG.resetAfterFlash) {
+    step(75, 'Erasing customer data...');
+    await sh(serial, 'am broadcast -a android.intent.action.FACTORY_RESET -p android --receiver-foreground');
+  } else {
+    step(75, 'Rebooting frame...');
+    await run(ADB, ['-s', serial, 'reboot']);
+  }
+  await waitFor(async () => !(await adbDevices()).some(x => x.serial === serial && x.st === 'device'), 90000, 2000);
+  step(88, 'Verifying installation...');
   const v = await verifyBoot(serial);
-  if (!v.seen) throw new Error('The frame did not come back on USB after the new image. Check its screen.');
-  step(80, 'Erasing customer data...');
-  await run(ADB, ['-s', v.serial, 'shell', 'am', 'broadcast', '-a', 'android.intent.action.FACTORY_RESET', '-p', 'android', '--receiver-foreground']);
-  await waitFor(async () => !(await adbDevices()).some(x => x.st === 'device'), 90000, 2000);
-  step(92, 'Checking...');
-  return verifyBoot(serial);
+  if (!v.seen && !(rma || CONFIG.resetAfterFlash)) {
+    // it should have come back: USB debugging was on before and nothing erased it
+    const d = (await adbDevices()).find(x => x.serial === serial);
+    throw new Error(d ? 'The frame is on USB but not answering as before (' + d.st + '). Check its screen.' : 'The frame did not come back on USB after the restart. Check its screen; do not unplug it yet.');
+  }
+  return v;
+}
+
+// Put a unit back: the stock system image and its own original boot partitions.
+async function undo(serial) {
+  const T = '/data/local/tmp/';
+  await sh(serial, `[ -f ${T}prod-stock.img ] && dd if=${T}prod-stock.img of=${REF.super} bs=4096 seek=${REF.productSeek} conv=notrunc 2>/dev/null; [ -f ${T}bl.orig.img ] && dd if=${T}bl.orig.img of=/dev/block/by-name/bootloader_a bs=1048576 2>/dev/null; [ -f ${T}env.orig.img ] && dd if=${T}env.orig.img of=/dev/block/by-name/env_a bs=4096 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
+  const ok = (await regionSha(serial, REF.productBlocks)) === REF.stockProduct;
+  log('   undo: stock system image ' + (ok ? 'verified' : 'NOT verified'));
+  return ok;
+}
+async function restoreUnit() {
+  const d = (await adbDevices()).find(x => x.st === 'device');
+  if (!d) { log('restore: the frame is not answering on USB, so it cannot be restored from here.'); return; }
+  if (DRY) { log('restore (dry run): would write the stock system image and this unit\'s original boot partitions back, then restart.'); return; }
+  flashing = true; setState('FLASHING'); step(10, 'Restoring original software...');
+  try {
+    const bdir = await unitBackupDir(d.serial), T = '/data/local/tmp/';
+    needImages(['stock_product']);
+    await push(d.serial, imgPath('stock_product'), T + 'prod-stock.img', REF.stockProduct);
+    for (const [f, t] of [['bootloader_a.original.img', 'bl.orig.img'], ['env_a.original.img', 'env.orig.img']]) if (fs.existsSync(path.join(bdir, f))) await push(d.serial, path.join(bdir, f), T + t);
+    step(60, 'Restoring original software...');
+    const ok = await undo(d.serial);
+    await sh(d.serial, 'pm enable net.frameo.frame; pm enable com.android.systemui; pm enable com.yhk.qeota; pm enable com.softwinner.update; dpm remove-active-admin com.paltech.salahos/.Admin', 60000);
+    await run(ADB, ['-s', d.serial, 'reboot']);
+    record(d.serial, 'restore', ok ? 'ok' : 'unverified');
+    flashing = false; setState(ok ? 'DONE' : 'ERROR', { serial: d.serial, reason: ok ? 'The original software is back on this frame. It is restarting.' : 'The original image did not read back correctly. Do not unplug the frame; see Logs.' });
+  } catch (e) { log('restore: ERROR — ' + e.message); flashing = false; setState('ERROR', { reason: e.message, serial: d.serial }); }
+}
+
+async function verifyBoot(serial) {
+  const up = await waitFor(async () => (await adbDevices()).some(x => x.serial === serial && x.st === 'device'), 360000, 3000);
+  if (!up) return { seen: false };
+  await waitFor(async () => (await getprop(serial, 'sys.boot_completed')) === '1', 180000, 3000);
+  await waitFor(async () => /\bdone\s*$/.test(await sh(serial, 'tail -1 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000)), 90000, 3000);
+  const lg = await sh(serial, 'tail -20 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000);
+  (lg || '(no setup log readable)').split('\n').forEach(l => log('   frame: ' + l));
+  const pm = await sh(serial, 'pm path com.paltech.salahos', 30000);
+  const home = await sh(serial, 'cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME | grep -m1 packageName', 30000);
+  const owner = await sh(serial, 'dpm list-owners', 30000);
+  const dev = (await sh(serial, 'ls /product/etc/salahos/dev 2>/dev/null', 20000)) !== '';
+  const v = { seen: true, serial, app: /\/product\/app\/SalahOS\//.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
+  log('   result: ' + JSON.stringify(v));
+  // A shipping image leaves the workshop with USB debugging off. It is still on here only because the
+  // operator switched it on to flash; turning it off is the last thing the flasher does.
+  if (v.app && v.home && v.owner && v.setupDone && !dev) { await sh(serial, 'settings put global adb_enabled 0', 20000); log('   shipping image: USB debugging switched off'); }
+  return v;
 }
 
 async function startFlash() {
   if (flashing) return;
   if (state !== 'READY' && state !== 'ERROR') { log('flash: ignored (not READY/ERROR)'); return; }
-  if (!DRY) { // never restart a frame into flashing mode on a computer that has no driver for it
-    // (Bootloader mode is a one-time visit that a power cycle ends, so a first contact is allowed there.
-    //  Flashing mode can persist across a power cycle, so it needs a driver on record or installed by us.)
-    if (!(await driverSeen('fastbootd')) && !driversInstalled()) { log('flash: refused — this computer has no driver on record for flashing mode (fastbootd)'); setState('ERROR', { reason: 'This computer has no USB driver for the frame\'s flashing mode yet. The frame was not restarted and nothing was changed.', serial: lastSerial }); return; }
-  }
   flashing = true;
   setState('FLASHING');
 
@@ -280,13 +356,13 @@ async function startFlash() {
   try {
     if (!DRY) {
       steps.forEach((s, i) => { log(`plan ${i + 1}/${steps.length}: ${s.label}`); });
-      const v = isRma ? await liveRma(serial) : await liveNew(serial);
+      const v = await liveFlash(serial, isRma);
       send('progress', { pct: 100, label: 'Verifying installation...' });
       const res = { verify: v };
       if (isRma) for (const q of CHECKS) { const ok = await askCheck(q, v.serial || serial); res[q.id] = ok ? 'pass' : 'FAIL'; log(`check: ${q.id}: ${res[q.id]}`); }
       const failed = CHECKS.filter(q => res[q.id] === 'FAIL').map(q => q.id);
       flashing = false;
-      if (v.seen && !(v.app && v.home)) { record(serial, isRma ? 'rma' : 'new', 'verify-failed', res); setState('ERROR', { reason: 'The frame started, but Salah OS is not in place as expected (see Logs).', serial, canRestore: !!CONFIG.images.stock_product }); return; }
+      if (v.seen && !(v.app && v.home && v.owner && v.setupDone)) { record(serial, isRma ? 'rma' : 'new', 'verify-failed', res); setState('ERROR', { reason: 'The frame started, but Salah OS is not in place as expected (see Logs).', serial, canRestore: !!CONFIG.images.stock_product }); return; }
       if (failed.length) { record(serial, 'rma', 'check-failed', res); setState('ERROR', { reason: 'This frame failed its check: ' + failed.join(', ') + '. Set it aside; do not resell it.', serial }); return; }
       record(serial, isRma ? 'rma' : 'new', v.seen ? 'ok' : 'flashed-unverified', res);
       setState('DONE', { serial, reason: v.seen ? '' : 'The image is written. This frame does not report back over USB, so check that its screen shows the Salah OS welcome page, then unplug it.' });
@@ -368,13 +444,7 @@ function createWindow() {
 ipcMain.on('startFlash', () => startFlash());
 ipcMain.on('installDrivers', () => installDrivers());
 ipcMain.on('answerCheck', (_e, pass) => { if (state === 'CHECK' && checkWaiter) { const w = checkWaiter; checkWaiter = null; w(!!pass); } });
-ipcMain.on('restoreOriginal', () => {
-  if (state !== 'ERROR') return;
-  log('restore: would write the original software back:');
-  log(`   would run:  ${FB} flash product  ${IMG('stock_product')}`);
-  log(`   would run:  ${FB} flash bootloader_a  ${IMG('stock_bootloader_a')}   and env_a  ${IMG('stock_env_a')}`);
-  log('restore: not enabled in this build — nothing was changed.');
-});
+ipcMain.on('restoreOriginal', () => { if (state === 'ERROR' && !flashing) restoreUnit(); });
 ipcMain.on('closeWindow', () => { if (state !== 'FLASHING' && state !== 'CHECK' && win) win.close(); });
 ipcMain.handle('getConfig', () => ({
   version: CONFIG.version, dryRun: DRY, golden: CONFIG.golden, tools: { adb: ADB, fastboot: FB }, drivers: driverSummary(),
