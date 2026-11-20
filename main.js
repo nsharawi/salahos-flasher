@@ -236,6 +236,7 @@ async function liveFlash(serial, rma) {
   if (sha(bl) !== (await partSha(serial, 'bootloader_a')) || sha(env) !== (await partSha(serial, 'env_a'))) throw new Error('The copy of this unit\'s boot partitions does not match the frame. Nothing was changed.');
   // the first copy ever taken of a unit is its original; later runs must not overwrite it
   for (const [f, b] of [['bootloader_a.original.img', bl], ['env_a.original.img', env]]) if (!fs.existsSync(path.join(bdir, f))) fs.writeFileSync(path.join(bdir, f), b);
+  if (have === 'stock' && !fs.existsSync(path.join(bdir, 'original.json'))) fs.writeFileSync(path.join(bdir, 'original.json'), JSON.stringify({ serial, at: new Date().toISOString(), disabledBefore: (await sh(serial, 'pm list packages -d', 30000)).split('\n').map(x => x.replace('package:', '').trim()).filter(Boolean) }, null, 1));
   fs.writeFileSync(path.join(bdir, 'info.json'), JSON.stringify({ serial, at: new Date().toISOString(), had: have, fingerprint: await getprop(serial, 'ro.build.fingerprint') }, null, 1));
 
   const patch = JSON.parse(fs.readFileSync(imgPath('bootlogo_patch'), 'utf8'));
@@ -361,10 +362,28 @@ async function restoreUnit() {
     for (const [f, t] of [['bootloader_a.original.img', 'bl.orig.img'], ['env_a.original.img', 'env.orig.img']]) if (fs.existsSync(path.join(bdir, f))) await push(d.serial, path.join(bdir, f), T + t);
     step(60, 'Restoring original software...');
     const ok = await undo(d.serial);
-    await sh(d.serial, 'pm enable net.frameo.frame; pm enable com.android.systemui; pm enable com.yhk.qeota; pm enable com.softwinner.update; dpm remove-active-admin com.paltech.salahos/.Admin', 60000);
-    await run(ADB, ['-s', d.serial, 'reboot']);
+    if (ok) {
+      // The software is back. Now take every trace of Salah OS out of the frame's own settings, so nothing of
+      // ours is left behind: no trusted computer, no USB debugging, no owner record, none of our tweaks.
+      let was = ['net.frameo.frame', 'com.yhk.qeota', 'com.softwinner.update', 'com.android.provision'];   // what our setup switches off on a stock frame
+      try { const o = JSON.parse(fs.readFileSync(path.join(bdir, 'original.json'), 'utf8')); const off = new Set(o.disabledBefore || []); was = (await sh(d.serial, 'pm list packages -d', 30000)).split('\n').map(x => x.replace('package:', '').trim()).filter(x => x && !off.has(x)); } catch (e) { }
+      log('   switching back on: ' + was.join(', '));   // the Android bar is NOT in this list: these frames ship with it off
+      await sh(d.serial, was.map(p => 'pm enable ' + p).join('; '), 60000);
+      await sh(d.serial, [
+        'rm -f /data/system/device_owner_2.xml /data/system/device_policies.xml',              // Salah OS no longer owns the device (takes effect on restart)
+        'rm -f /data/misc/adb/adb_keys /data/misc/adb/adb_temp_keys.xml',                      // no computer stays trusted
+        'rm -rf /data/system/package_cache',                                                   // Android re-reads the built-in apps
+        'rm -f /data/system/salahos_apk_id /data/local/salahos_setup_v1 /data/local/tmp/salahos-setup.log /data/system/users/0/wallpaper_info.xml',
+        'rm -f /data/local/tmp/prod-stock.img /data/local/tmp/prod-new.img /data/local/tmp/bl.*.img /data/local/tmp/env.*.img',
+        'settings delete global window_animation_scale; settings delete global transition_animation_scale; settings delete global animator_duration_scale',
+        'settings delete secure enabled_accessibility_services; settings put secure accessibility_enabled 0; settings delete secure immersive_mode_confirmations',
+        'settings put global development_settings_enabled 0'
+      ].join('; '), 60000);
+      log('   Salah OS traces removed; switching USB debugging off and restarting');
+      await sh(d.serial, 'settings put global adb_enabled 0; sync; reboot', 20000);            // last: this ends our access
+    } else await run(ADB, ['-s', d.serial, 'reboot']);
     record(d.serial, 'restore', ok ? 'ok' : 'unverified');
-    flashing = false; setState(ok ? 'DONE' : 'ERROR', { serial: d.serial, reason: ok ? 'The original software is back on this frame. It is restarting.' : 'The original image did not read back correctly. Do not unplug the frame; see Logs.' });
+    flashing = false; setState(ok ? 'DONE' : 'ERROR', { serial: d.serial, reason: ok ? 'The original software is back on this frame and USB debugging is off. It is restarting; you can unplug it.' : 'The original image did not read back correctly. Do not unplug the frame; see Logs.' });
   } catch (e) { log('restore: ERROR — ' + e.message); flashing = false; setState('ERROR', { reason: e.message, serial: d.serial }); }
 }
 
