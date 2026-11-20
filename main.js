@@ -314,13 +314,17 @@ async function hardwareChecks(serial) {
   const res = {};
   const ask = async (q) => { const ok = await askCheck(q, serial); setState('FLASHING'); return ok ? 'pass' : 'FAIL'; };
   step(88, 'Checking the frame...');
-  res.screen = await ask(CHECKS[0]);
   const vc = parseInt(((await sh(serial, 'dumpsys package com.paltech.salahos | grep -m1 versionCode', 30000)).match(/versionCode=(\d+)/) || [])[1] || '0', 10);
   const start = (what, nonce) => sh(serial, `am start -n com.paltech.salahos/.MainActivity --es selftest ${what}` + (nonce ? ` --es nonce ${nonce}` : ''), 30000);
   if (vc < 189) {            // an app from before the built-in checks: the operator answers instead
     log('   this frame\'s app (' + vc + ') has no built-in checks; asking instead');
-    res.touch = await ask(CHECKS[1]); res.speaker = await ask(CHECKS[2]); return res;
+    res.screen = await ask(CHECKS[0]); res.touch = await ask(CHECKS[1]); res.speaker = await ask(CHECKS[2]); return res;
   }
+  if (vc >= 190) {           // solid colours on the frame, one touch each; the operator judges
+    await start('screen');
+    res.screen = await ask({ id: 'screen', title: 'Check the screen', body: 'Touch the frame to step through black, white, red, green and blue. Is every colour clean, with no dead pixels, lines or uneven areas?' });
+    await start('stop');
+  } else res.screen = await ask(CHECKS[0]);
   const F = '/data/data/com.paltech.salahos/files/selftest.json', nonce = Date.now().toString(36);
   await sh(serial, 'rm -f ' + F, 20000); await start('touch', nonce);
   setState('CONFIRM', { confirm: 'Touch the five targets on the frame\'s screen, one at a time.', serial });

@@ -10,7 +10,7 @@
     "fastboot": "C:/adb-tools/fastboot.exe"
   },
   "images": {
-    "product": "C:/SalahOS/prod-image/product_a_salahos-dev8.img",
+    "product": "C:/SalahOS/prod-image/product_a_salahos-dev9.img",
     "stock_product": "C:/SalahOS/prod-image/product_a_stock.img",
     "env_new": "images/env_bl255.img",
     "bootlogo_patch": "images/bootlogo.patch.json"
@@ -32,6 +32,14 @@
       {
         "sha": "99e378102aec38ec732b42a69a5198399957f47dd9145bbc84a043fb9b9a0ba4",
         "blocks": 34725
+      },
+      {
+        "sha": "2cb31cc7791932e010706c7abcb085dfc0ad7fc0e733b68132cc40cd42d30a23",
+        "blocks": 34727
+      },
+      {
+        "sha": "b6e62b558d971abb48c00c0640e23b015dae7aa91f78c3f0d7bfa898a0bdfa5a",
+        "blocks": 34727
       }
     ]
   },
