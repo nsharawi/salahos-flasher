@@ -1,6 +1,6 @@
 {
   "version": "0.9.0-test",
-  "dryRun": true,
+  "dryRun": false,
   "golden": {
     "fingerprint": "Allwinner/ceres_b3/ceres-b3:13/TP1A.221005.003/eng.lido.20260708.200502:user/release-keys",
     "board": "ceres_b3"
