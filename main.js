@@ -133,7 +133,7 @@ function planRma(serial) {
 const CHECKS = [
   { id: 'screen',  title: 'Check the screen',  body: 'Look at the frame. Is the picture clean, with no lines, dead areas or flicker?' },
   { id: 'touch',   title: 'Check the touch',   body: 'Tap each corner of the frame’s screen. Did every tap register?' },
-  { id: 'speaker', title: 'Check the speaker', body: 'The frame plays a short adhan. Is the sound clear?' }
+  { id: 'speaker', title: 'Check the speaker', body: 'Is the frame\'s sound loud and clear?' }
 ];
 function askCheck(q, serial) { return new Promise((resolve) => { checkWaiter = resolve; setState('CHECK', { check: q, rma: true, serial }); }); }
 function record(serial, kind, result, extra) {
@@ -277,23 +277,59 @@ async function liveFlash(serial, rma) {
     log('   backlight setting written and read back');
   }
 
-  // ---- restart (a returned frame is erased on the way), then see what came up
-  if (rma || CONFIG.resetAfterFlash) {
-    step(75, 'Erasing customer data...');
-    await sh(serial, 'am broadcast -a android.intent.action.FACTORY_RESET -p android --receiver-foreground');
-  } else {
-    step(75, 'Rebooting frame...');
-    await run(ADB, ['-s', serial, 'reboot']);
-  }
+  // ---- restart, see what came up, check the hardware; a returned frame is erased last
+  step(75, 'Rebooting frame...');
+  await run(ADB, ['-s', serial, 'reboot']);
   await waitFor(async () => !(await adbDevices()).some(x => x.serial === serial && x.st === 'device'), 90000, 2000);
-  step(88, 'Verifying installation...');
-  const v = await verifyBoot(serial);
-  if (!v.seen && !(rma || CONFIG.resetAfterFlash)) {
-    // it should have come back: USB debugging was on before and nothing erased it
+  step(84, 'Verifying installation...');
+  let v = await verifyBoot(serial);
+  if (!v.seen) {
     const d = (await adbDevices()).find(x => x.serial === serial);
     throw new Error(d ? 'The frame is on USB but not answering as before (' + d.st + '). Check its screen.' : 'The frame did not come back on USB after the restart. Check its screen; do not unplug it yet.');
   }
+  if (!(v.app && v.home && v.owner && v.setupDone)) return v;
+  v.checks = await hardwareChecks(serial);
+  if (Object.values(v.checks).includes('FAIL')) return v;
+  if (rma || CONFIG.resetAfterFlash) {
+    step(92, 'Erasing customer data...');
+    await sh(serial, 'am broadcast -a android.intent.action.FACTORY_RESET -p android --receiver-foreground');
+    await waitFor(async () => !(await adbDevices()).some(x => x.serial === serial && x.st === 'device'), 90000, 2000);
+    // A dev image reports back after the erase. A shipping image comes up with USB debugging off, by design.
+    if (v.dev) { const v2 = await verifyBoot(serial); v2.checks = v.checks; v2.erased = true; return v2; }
+    v.erased = true; v.afterErase = 'not readable (shipping image)';
+  } else if (!v.dev) {
+    // A shipping image leaves the workshop with USB debugging off. It was on only so the frame could be flashed.
+    await sh(serial, 'settings put global adb_enabled 0', 20000); log('   shipping image: USB debugging switched off'); v.usbOff = true;
+  }
   return v;
+}
+
+// ---- hardware checks: screen (the operator looks), touch (five targets on the frame), speaker (a test sound)
+async function hardwareChecks(serial) {
+  const res = {};
+  const ask = async (q) => { const ok = await askCheck(q, serial); setState('FLASHING'); return ok ? 'pass' : 'FAIL'; };
+  step(88, 'Checking the frame...');
+  res.screen = await ask(CHECKS[0]);
+  const vc = parseInt(((await sh(serial, 'dumpsys package com.paltech.salahos | grep -m1 versionCode', 30000)).match(/versionCode=(\d+)/) || [])[1] || '0', 10);
+  const start = (what, nonce) => sh(serial, `am start -n com.paltech.salahos/.MainActivity --es selftest ${what}` + (nonce ? ` --es nonce ${nonce}` : ''), 30000);
+  if (vc < 189) {            // an app from before the built-in checks: the operator answers instead
+    log('   this frame\'s app (' + vc + ') has no built-in checks; asking instead');
+    res.touch = await ask(CHECKS[1]); res.speaker = await ask(CHECKS[2]); return res;
+  }
+  const F = '/data/data/com.paltech.salahos/files/selftest.json', nonce = Date.now().toString(36);
+  await sh(serial, 'rm -f ' + F, 20000); await start('touch', nonce);
+  setState('CONFIRM', { confirm: 'Touch the five targets on the frame\'s screen, one at a time.', serial });
+  let r = null;
+  await waitFor(async () => { try { const o = JSON.parse(await sh(serial, 'cat ' + F + ' 2>/dev/null', 15000)); if (o.nonce === nonce && o.test === 'touch') { r = o; return true; } } catch (e) { } return false; }, 100000, 1500);
+  setState('FLASHING');
+  res.touch = r && r.status === 'pass' ? 'pass' : 'FAIL';
+  log('   touch: ' + res.touch + ' — ' + (r ? r.detail : 'no answer from the frame'));
+  if (!r) await start('stop');
+  let playing = true;
+  (async () => { while (playing) { await start('sound'); for (let i = 0; i < 14 && playing; i++) await sleep(500); } })();
+  res.speaker = await ask({ id: 'speaker', title: 'Check the speaker', body: 'The frame is playing a test sound. Is it loud and clear, with no rattle?' });
+  playing = false; await start('stop');
+  return res;
 }
 
 // Put a unit back: the stock system image and its own original boot partitions.
@@ -336,9 +372,6 @@ async function verifyBoot(serial) {
   const dev = (await sh(serial, 'ls /product/etc/salahos/dev 2>/dev/null', 20000)) !== '';
   const v = { seen: true, serial, app: /\/product\/app\/SalahOS\//.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
   log('   result: ' + JSON.stringify(v));
-  // A shipping image leaves the workshop with USB debugging off. It is still on here only because the
-  // operator switched it on to flash; turning it off is the last thing the flasher does.
-  if (v.app && v.home && v.owner && v.setupDone && !dev) { await sh(serial, 'settings put global adb_enabled 0', 20000); log('   shipping image: USB debugging switched off'); }
   return v;
 }
 
@@ -359,13 +392,12 @@ async function startFlash() {
       const v = await liveFlash(serial, isRma);
       send('progress', { pct: 100, label: 'Verifying installation...' });
       const res = { verify: v };
-      if (isRma) for (const q of CHECKS) { const ok = await askCheck(q, v.serial || serial); res[q.id] = ok ? 'pass' : 'FAIL'; log(`check: ${q.id}: ${res[q.id]}`); }
-      const failed = CHECKS.filter(q => res[q.id] === 'FAIL').map(q => q.id);
+      const failed = Object.keys(v.checks || {}).filter(k => v.checks[k] === 'FAIL');
       flashing = false;
-      if (v.seen && !(v.app && v.home && v.owner && v.setupDone)) { record(serial, isRma ? 'rma' : 'new', 'verify-failed', res); setState('ERROR', { reason: 'The frame started, but Salah OS is not in place as expected (see Logs).', serial, canRestore: !!CONFIG.images.stock_product }); return; }
-      if (failed.length) { record(serial, 'rma', 'check-failed', res); setState('ERROR', { reason: 'This frame failed its check: ' + failed.join(', ') + '. Set it aside; do not resell it.', serial }); return; }
-      record(serial, isRma ? 'rma' : 'new', v.seen ? 'ok' : 'flashed-unverified', res);
-      setState('DONE', { serial, reason: v.seen ? '' : 'The image is written. This frame does not report back over USB, so check that its screen shows the Salah OS welcome page, then unplug it.' });
+      if (!(v.app && v.home && v.owner && v.setupDone)) { record(serial, isRma ? 'rma' : 'new', 'verify-failed', res); setState('ERROR', { reason: 'The frame started, but Salah OS is not in place as expected (see Logs).', serial, canRestore: !!CONFIG.images.stock_product }); return; }
+      if (failed.length) { record(serial, isRma ? 'rma' : 'new', 'check-failed', res); setState('ERROR', { reason: 'This frame failed its check: ' + failed.join(', ') + '. Set it aside.', serial, canRestore: !!CONFIG.images.stock_product }); return; }
+      record(serial, isRma ? 'rma' : 'new', 'ok', res);
+      setState('DONE', { serial, reason: v.afterErase ? 'All set. The frame is erasing itself and will show the Salah OS welcome page. You can unplug it then.' : '' });
       return;
     }
     let from = 2;
