@@ -263,6 +263,11 @@ async function liveFlash(serial, rma) {
     await sh(serial, `dd if=${T}prod-new.img of=${REF.super} ${dd} 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
     if ((await regionSha(serial, newBlocks)) !== newSha) { await undo(serial); throw new Error('The system image did not read back correctly. The frame\'s previous state was written back.'); }
     log('   system image written and read back');
+    // Android keeps a parsed copy of every built-in app and trusts it while the app file's date is unchanged.
+    // Files in the image all carry one fixed date, so without this Android would go on describing the OLD
+    // Salah OS (version, screens, permissions) while running the new file. Clearing the copy makes it look again.
+    await sh(serial, 'rm -rf /data/system/package_cache', 30000);
+    log('   package cache cleared, so Android re-reads the built-in app on the next start');
   }
   step(55, 'Writing boot logo...');
   if (!pr.already) {
