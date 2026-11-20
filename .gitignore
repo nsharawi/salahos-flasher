@@ -1,0 +1,11 @@
+node_modules/
+dist/
+backups/
+log/
+work/
+drivers-installed.json
+*.img
+*.log
+bin/*.exe
+bin/*.dll
+drivers/google/

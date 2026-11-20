@@ -1,0 +1,70 @@
+{
+  "name": "salahos-flasher",
+  "version": "0.9.0-test",
+  "description": "Salah OS Flasher \u2014 production bench tool (test build, dry-run by default)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "author": "Paltech LLC",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "^31.7.6",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.paltech.salahos.flasher",
+    "productName": "Salah OS Flasher",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json",
+      "vendor/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "config.json",
+        "to": "config.json"
+      },
+      {
+        "from": "drivers",
+        "to": "drivers",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "images",
+        "to": "images",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "SalahOS-Flasher-${version}.exe"
+    }
+  }
+}

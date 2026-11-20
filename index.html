@@ -1,0 +1,391 @@
+﻿<!DOCTYPE html>
+<html lang="en" class="h-full select-none" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Salah OS Flasher</title>
+
+  <!-- Fonts and styling are inside the app (vendor/), so it runs with no internet. -->
+  <link rel="stylesheet" href="vendor/fonts.css" />
+
+  <style>
+    :root {
+      --md-sys-color-bg: #EFF3F8; --md-sys-color-surface: #FFFFFF; --md-sys-color-surface-variant: #F0F4F9;
+      --md-sys-color-outline: #C4C7C5; --md-sys-color-outline-variant: #E0E3E7;
+      --md-sys-color-primary: #0B57D0; --md-sys-color-on-primary: #FFFFFF;
+      --md-sys-color-primary-container: #D3E3FD; --md-sys-color-on-primary-container: #041E49;
+      --md-sys-color-on-surface: #1F1F1F; --md-sys-color-on-surface-variant: #444746;
+      --md-sys-color-success: #146C2E; --md-sys-color-warning: #E37400; --md-sys-color-error: #B3261E;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root[data-theme="system"] {
+        --md-sys-color-bg: #0E1116; --md-sys-color-surface: #1A1D24; --md-sys-color-surface-variant: #242832;
+        --md-sys-color-outline: #44474E; --md-sys-color-outline-variant: #2D313B;
+        --md-sys-color-primary: #A8C7FA; --md-sys-color-on-primary: #062E6F;
+        --md-sys-color-primary-container: #0842A0; --md-sys-color-on-primary-container: #D3E3FD;
+        --md-sys-color-on-surface: #E3E3E3; --md-sys-color-on-surface-variant: #C4C7C5;
+        --md-sys-color-success: #6DD58C; --md-sys-color-warning: #FFB74D; --md-sys-color-error: #F2B8B5;
+      }
+    }
+    :root[data-theme="light"] {
+      --md-sys-color-bg: #EFF3F8; --md-sys-color-surface: #FFFFFF; --md-sys-color-surface-variant: #F0F4F9;
+      --md-sys-color-outline: #C4C7C5; --md-sys-color-outline-variant: #E0E3E7;
+      --md-sys-color-primary: #0B57D0; --md-sys-color-on-primary: #FFFFFF;
+      --md-sys-color-primary-container: #D3E3FD; --md-sys-color-on-primary-container: #041E49;
+      --md-sys-color-on-surface: #1F1F1F; --md-sys-color-on-surface-variant: #444746;
+      --md-sys-color-success: #146C2E; --md-sys-color-warning: #E37400; --md-sys-color-error: #B3261E;
+    }
+    :root[data-theme="dark"] {
+      --md-sys-color-bg: #0E1116; --md-sys-color-surface: #1A1D24; --md-sys-color-surface-variant: #242832;
+      --md-sys-color-outline: #44474E; --md-sys-color-outline-variant: #2D313B;
+      --md-sys-color-primary: #A8C7FA; --md-sys-color-on-primary: #062E6F;
+      --md-sys-color-primary-container: #0842A0; --md-sys-color-on-primary-container: #D3E3FD;
+      --md-sys-color-on-surface: #E3E3E3; --md-sys-color-on-surface-variant: #C4C7C5;
+      --md-sys-color-success: #6DD58C; --md-sys-color-warning: #FFB74D; --md-sys-color-error: #F2B8B5;
+    }
+    body { background-color: var(--md-sys-color-bg); color: var(--md-sys-color-on-surface); font-family: 'Roboto', sans-serif; }
+    .icon-standalone-140 { font-size: 140px !important; width: 140px !important; height: 140px !important; line-height: 1 !important; display: inline-flex; align-items: center; justify-content: center; font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 48; }
+    .icon-inner-52 { font-size: 52px !important; line-height: 1 !important; font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 48; }
+    @keyframes m3-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .animate-spin-ring { animation: m3-spin 1.4s linear infinite; transform-origin: center; }
+    .shell-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .shell-scroll::-webkit-scrollbar-track { background: #090B0E; }
+    .shell-scroll::-webkit-scrollbar-thumb { background: #272B35; border-radius: 3px; }
+    /* frameless window drag regions */
+    .drag { -webkit-app-region: drag; }
+    .no-drag { -webkit-app-region: no-drag; }
+  </style>
+  <!-- The Tailwind classes used on this page, built ahead of time (same output the CDN script produced). -->
+  <link rel="stylesheet" href="vendor/tailwind.css" />
+</head>
+<body class="h-screen overflow-hidden font-sans">
+
+  <!-- APP WINDOW CONTAINER (~820px x 480px) -->
+  <div class="w-full h-full bg-[var(--md-sys-color-surface)] flex flex-col overflow-hidden relative transition-colors duration-200">
+
+    <!-- HEADER BAR -->
+    <header class="drag h-14 px-6 flex items-center justify-between border-b border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface)] shrink-0">
+      <div class="flex items-center space-x-3">
+        <span class="material-symbols-rounded text-[var(--md-sys-color-primary)] text-[24px]">memory</span>
+        <h1 class="text-[16px] font-medium tracking-tight text-[var(--md-sys-color-on-surface)]">Salah OS Flasher</h1>
+        <span id="dry-pill" class="hidden no-drag text-[11px] font-semibold tracking-wide px-2 py-0.5 rounded-full bg-[var(--md-sys-color-warning)]/15 text-[var(--md-sys-color-warning)] uppercase">Dry run</span>
+      </div>
+      <button id="header-close-btn" onclick="handleWindowClose()" class="no-drag w-8 h-8 rounded-full hover:bg-[var(--md-sys-color-surface-variant)] flex items-center justify-center text-[var(--md-sys-color-on-surface-variant)] transition-colors" title="Close window">
+        <span class="material-symbols-rounded text-[20px]">close</span>
+      </button>
+    </header>
+
+    <!-- MAIN CONTENT AREA & RIGID 148px x 148px VISUAL ANCHOR -->
+    <main id="main-content-area" class="flex-1 grid grid-cols-12 overflow-hidden p-8 gap-6 items-center relative">
+      <section id="left-text-container" class="col-span-7 flex flex-col justify-center space-y-3 pr-4"></section>
+      <section class="col-span-5 flex flex-col items-center justify-center h-full pl-2">
+        <div id="right-visual-anchor" class="w-[148px] h-[148px] flex items-center justify-center relative shrink-0"></div>
+      </section>
+
+      <!-- INLINE SHELL LOGS OVERLAY -->
+      <div id="shell-overlay" class="absolute inset-0 bg-[#111318] text-[#E2E8F0] font-mono p-5 flex flex-col hidden z-30 transition-opacity">
+        <div class="flex justify-end mb-2">
+          <button id="copy-log-btn" onclick="copyConsoleLogs()" class="p-1.5 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors" title="Copy logs to clipboard">
+            <span id="copy-icon" class="material-symbols-rounded text-[20px]">content_copy</span>
+          </button>
+        </div>
+        <div id="shell-output" class="flex-1 overflow-y-auto shell-scroll text-[12px] leading-relaxed space-y-1"></div>
+      </div>
+    </main>
+
+    <!-- FOOTER ACTION BAR -->
+    <footer class="h-16 px-6 border-t border-[var(--md-sys-color-outline-variant)] bg-[var(--md-sys-color-surface)] flex items-center justify-between shrink-0">
+      <div class="flex items-center space-x-3">
+        <button onclick="openModal('tech-modal')" class="w-8 h-8 rounded-full hover:bg-[var(--md-sys-color-surface-variant)] flex items-center justify-center text-[var(--md-sys-color-on-surface-variant)] transition-colors" title="Technical Information">
+          <span class="material-symbols-rounded text-[20px]">settings</span>
+        </button>
+        <span id="build-string" class="text-[12px] text-[var(--md-sys-color-on-surface-variant)]">v0.9.0-test</span>
+        <button id="logs-toggle-btn" onclick="toggleShellLogs()" class="ml-1 px-3 py-1 text-[13px] font-medium text-[var(--md-sys-color-primary)] hover:bg-[var(--md-sys-color-primary-container)]/40 rounded-full transition-all flex items-center gap-1.5">
+          <span class="material-symbols-rounded text-[18px]">terminal</span>
+          Logs
+        </button>
+      </div>
+      <div id="primary-cta-container"></div>
+    </footer>
+  </div>
+
+  <!-- WIPE CONFIRMATION DIALOG -->
+  <div id="wipe-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-[var(--md-sys-color-surface)] text-[var(--md-sys-color-on-surface)] rounded-xl p-6 max-w-md w-full shadow-2xl border border-[var(--md-sys-color-outline-variant)] space-y-4">
+      <div class="w-10 h-10 rounded-full bg-[var(--md-sys-color-primary-container)] text-[var(--md-sys-color-on-primary-container)] flex items-center justify-center">
+        <span class="material-symbols-rounded text-[24px]">delete_sweep</span>
+      </div>
+      <h3 class="text-[20px] font-bold tracking-tight">Erase and install Salah OS?</h3>
+      <p id="wipe-copy" class="text-[14px] text-[var(--md-sys-color-on-surface-variant)] leading-relaxed">
+        Unlocking the bootloader will erase all existing data on this frame before installing Salah OS.
+      </p>
+      <div class="flex justify-end space-x-3 pt-2">
+        <button onclick="closeModal('wipe-modal')" class="px-5 py-2 text-[14px] font-medium text-[var(--md-sys-color-primary)] hover:bg-[var(--md-sys-color-primary-container)]/40 rounded-full transition-colors">Cancel</button>
+        <button onclick="closeModal('wipe-modal'); startFlashingProcess();" class="px-6 py-2 text-[14px] font-medium bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)] hover:opacity-90 rounded-full shadow transition-all">Flash</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TECHNICAL INFORMATION MODAL -->
+  <div id="tech-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div class="bg-[var(--md-sys-color-surface)] text-[var(--md-sys-color-on-surface)] rounded-xl p-6 max-w-lg w-full shadow-2xl border border-[var(--md-sys-color-outline-variant)] space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-[18px] font-bold flex items-center gap-2">
+          <span class="material-symbols-rounded text-[var(--md-sys-color-primary)]">settings</span>
+          Technical information
+        </h3>
+        <button onclick="closeModal('tech-modal')" class="w-8 h-8 rounded-full hover:bg-[var(--md-sys-color-surface-variant)] flex items-center justify-center text-[var(--md-sys-color-on-surface-variant)] transition-colors">
+          <span class="material-symbols-rounded text-[20px]">close</span>
+        </button>
+      </div>
+      <div id="tech-body" class="text-[12px] space-y-3 font-mono bg-[var(--md-sys-color-surface-variant)] p-4 rounded-2xl border border-[var(--md-sys-color-outline-variant)] overflow-y-auto max-h-64"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentState = 'IDLE';
+    let lastChecks = [];
+    let lastReason = '';
+    let lastInfo = {};          // { rma, canRestore, check, confirm } from the device core
+    let isShellOpen = false;
+    let cfg = { version: 'v0.9.0-test', dryRun: true, golden: {}, images: {}, tools: {} };
+    const api = window.flasherAPI;
+
+    window.onload = function () {
+      setAppState('IDLE');
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { closeModal('tech-modal'); closeModal('wipe-modal'); }
+      });
+      document.getElementById('tech-modal').addEventListener('click', function (e) { if (e.target === this) closeModal('tech-modal'); });
+      document.getElementById('wipe-modal').addEventListener('click', function (e) { if (e.target === this) closeModal('wipe-modal'); });
+
+      if (!api) { appendConsoleLog('[ui] running outside Electron — no device backend'); return; }
+
+      // subscribe to the device core
+      api.onStateChange(function (p) {
+        if (p.checks) lastChecks = p.checks;
+        const ts = document.getElementById('tech-serial'); if (ts) ts.textContent = p.serial || 'none connected';
+        lastReason = p.reason || '';
+        lastInfo = p;
+        setAppState(p.state);
+      });
+      api.onProgress(function (p) { renderFlashingView(p.pct, p.label); });
+      api.onLog(function (line) { appendConsoleLog(line); });
+
+      api.getConfig().then(function (c) {
+        cfg = c;
+        document.getElementById('build-string').textContent = c.version + (c.dryRun ? ' • dry run' : '');
+        document.getElementById('dry-pill').classList.toggle('hidden', !c.dryRun);
+        setWipeCopy();
+        renderTech(c);
+      });
+    };
+
+    // The confirm dialog says what is about to happen to this frame.
+    function setWipeCopy() {
+      const title = document.querySelector('#wipe-modal h3'), copy = document.getElementById('wipe-copy');
+      const go = document.querySelector('#wipe-modal button:last-child');
+      if (lastInfo.rma) {
+        title.textContent = 'Erase this customer’s settings and reinstall?';
+        copy.textContent = 'The frame’s Wi-Fi, masjid and settings are erased, and the current Salah OS is installed again.';
+        go.textContent = 'Reset and reinstall';
+      } else {
+        title.textContent = 'Erase and install Salah OS?';
+        copy.textContent = 'Unlocking the bootloader will erase all existing data on this frame before installing Salah OS.';
+        go.textContent = 'Flash';
+      }
+      if (cfg.dryRun) copy.textContent = 'Dry run: nothing will be erased or flashed. This confirms the step sequence only.';
+    }
+
+    function renderTech(c) {
+      const imgs = Object.keys(c.images || {});
+      document.getElementById('tech-body').innerHTML = `
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Mode:</strong> ${c.dryRun ? 'Dry run (no changes made)' : 'Live flashing'}</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Target Hardware:</strong> Onn 10.1" • Allwinner A133</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Target Board:</strong> ${c.golden.board || 'ceres_b3'}</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Golden Fingerprint:</strong><br/>
+          <span class="text-[11px] text-[var(--md-sys-color-on-surface-variant)]">${c.golden.fingerprint || ''}</span></div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Bundled Images:</strong>
+          ${imgs.length ? '<ul class="list-disc pl-4 mt-1 space-y-0.5 text-[var(--md-sys-color-on-surface-variant)]">' + imgs.map(k => '<li>' + k + ': ' + c.images[k] + '</li>').join('') + '</ul>'
+                        : '<span class="text-[var(--md-sys-color-on-surface-variant)]"> none set (build images first)</span>'}</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">Tools:</strong> ${(c.tools && c.tools.adb) || 'adb'} / ${(c.tools && c.tools.fastboot) || 'fastboot'}</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">USB drivers:</strong> ${c.drivers || 'not checked'}</div>
+        <div><strong class="text-[var(--md-sys-color-on-surface)]">This frame:</strong> <span id="tech-serial">${(lastInfo && lastInfo.serial) || 'none connected'}</span></div>`;
+    }
+
+    // STATE CONTROLLER
+    function setAppState(state) {
+      currentState = state;
+      const leftText = document.getElementById('left-text-container');
+      const rightVisual = document.getElementById('right-visual-anchor');
+      const primaryCTA = document.getElementById('primary-cta-container');
+      const closeBtn = document.getElementById('header-close-btn');
+
+      if (state === 'FLASHING') {
+        closeBtn.disabled = true; closeBtn.classList.add('opacity-[0.38]', 'cursor-not-allowed', 'pointer-events-none');
+        closeBtn.setAttribute('title', 'Cannot close while flashing');
+      } else {
+        closeBtn.disabled = false; closeBtn.classList.remove('opacity-[0.38]', 'cursor-not-allowed', 'pointer-events-none');
+        closeBtn.setAttribute('title', 'Close window');
+      }
+
+      const H = (t, b) => `<h2 class="text-[24px] font-bold tracking-tight text-[var(--md-sys-color-on-surface)]">${t}</h2>
+        <p class="text-[14px] text-[var(--md-sys-color-on-surface-variant)] leading-relaxed">${b}</p>`;
+      const BTN = (label, fn) => `<button onclick="${fn}" class="px-7 py-2.5 rounded-full bg-[var(--md-sys-color-primary)] text-[var(--md-sys-color-on-primary)] text-[14px] font-medium hover:opacity-90 shadow transition-all">${label}</button>`;
+      const TBTN = (label, fn) => `<button onclick="${fn}" class="px-5 py-2 text-[14px] font-medium text-[var(--md-sys-color-primary)] hover:bg-[var(--md-sys-color-primary-container)]/40 rounded-full transition-colors">${label}</button>`;
+      const ICON = (name, color) => `<span class="material-symbols-rounded icon-standalone-140 ${color}">${name}</span>`;
+
+      switch (state) {
+        case 'IDLE':
+          leftText.innerHTML = H('Waiting for a frame', 'Connect the frame to this computer with a USB cable to get started.');
+          rightVisual.innerHTML = ICON('usb_off', 'text-[var(--md-sys-color-on-surface-variant)]');
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'PREPARE': // placeholder copy/icon — tune to taste
+          leftText.innerHTML = H('Turn on USB debugging', 'On the frame, open Settings and enable USB debugging, then tap “Allow” when it asks about this computer.');
+          rightVisual.innerHTML = ICON('phonelink_setup', 'text-[var(--md-sys-color-primary)]');
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'PCSETUP': // one time per computer, before any frame is touched
+          leftText.innerHTML = H('Set up this computer', lastReason || 'This computer needs the frame’s USB drivers before it can flash. Windows will ask for permission once.');
+          rightVisual.innerHTML = ICON('phonelink_setup', 'text-[var(--md-sys-color-primary)]');
+          primaryCTA.innerHTML = BTN('Install drivers', 'installDrivers()');
+          break;
+
+        case 'CONFIRM': // the frame is asking for something on its own screen
+          leftText.innerHTML = H('Confirm on the frame', lastInfo.confirm || 'Follow the message on the frame’s screen to continue.');
+          rightVisual.innerHTML = ICON('phonelink_setup', 'text-[var(--md-sys-color-primary)]');
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'CHECK': { // returned frames: one question at a time
+          const q = lastInfo.check || {};
+          leftText.innerHTML = H(q.title || 'Check the frame', q.body || '');
+          rightVisual.innerHTML = ICON('phonelink_setup', 'text-[var(--md-sys-color-primary)]');
+          primaryCTA.innerHTML = `<div class="flex items-center space-x-3">${TBTN('Fail', "answerCheck(false)")}${BTN('Pass', "answerCheck(true)")}</div>`;
+          break;
+        }
+
+        case 'DETECTED':
+          leftText.innerHTML = H('Frame detected', 'Making sure this frame is ready for Salah OS.');
+          rightVisual.innerHTML = `
+            <svg width="148" height="148" viewBox="0 0 148 148" class="absolute inset-0">
+              <circle cx="74" cy="74" r="66" stroke="var(--md-sys-color-outline-variant)" stroke-width="8" fill="none" />
+              <circle cx="74" cy="74" r="66" stroke="var(--md-sys-color-primary)" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="100 300" class="animate-spin-ring" />
+            </svg>
+            <span class="material-symbols-rounded icon-inner-52 text-[var(--md-sys-color-primary)] z-10">usb</span>`;
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'READY':
+          leftText.innerHTML = lastInfo.rma
+            ? H('Returned frame', 'This frame already runs Salah OS. Click Reset and reinstall to erase its settings and put the current Salah OS on it.')
+            : H('Ready to flash', 'Everything looks good. Click Flash to install Salah OS on this frame.');
+          rightVisual.innerHTML = ICON('check', 'text-[var(--md-sys-color-success)]');
+          setWipeCopy();
+          primaryCTA.innerHTML = BTN(lastInfo.rma ? 'Reset and reinstall' : 'Flash', "openModal('wipe-modal')");
+          break;
+
+        case 'BLOCKED':
+          leftText.innerHTML = H('Frame not compatible', lastReason || 'This unit isn’t compatible or is locked. Please unplug from USB.');
+          rightVisual.innerHTML = ICON('warning', 'text-[var(--md-sys-color-warning)]');
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'FLASHING':
+          renderFlashingView(0, 'Starting…');
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'DONE':
+          leftText.innerHTML = H('Salah OS is installed', lastReason || 'All set. You can unplug the frame from USB now.');
+          rightVisual.innerHTML = `
+            <svg width="148" height="148" viewBox="0 0 148 148" class="absolute inset-0">
+              <circle cx="74" cy="74" r="66" stroke="var(--md-sys-color-success)" stroke-width="8" fill="none" />
+            </svg>
+            <span class="material-symbols-rounded icon-inner-52 text-[var(--md-sys-color-success)] z-10">check</span>`;
+          primaryCTA.innerHTML = '';
+          break;
+
+        case 'ERROR':
+          leftText.innerHTML = H('Something went wrong', lastReason || 'The installation stopped before finishing. Check the logs and try again.');
+          rightVisual.innerHTML = ICON('error', 'text-[var(--md-sys-color-error)]');
+          primaryCTA.innerHTML = lastInfo.canRestore
+            ? `<div class="flex items-center space-x-3">${TBTN('Restore original software', "restoreOriginal()")}${BTN('Retry', 'startFlashingProcess()')}</div>`
+            : BTN('Retry', 'startFlashingProcess()');
+          break;
+      }
+    }
+
+    // FLASHING renderer — label comes from the backend (onProgress), not from the pct.
+    function renderFlashingView(percent, label) {
+      const leftText = document.getElementById('left-text-container');
+      const rightVisual = document.getElementById('right-visual-anchor');
+      const msg = label || 'Working…';
+
+      leftText.innerHTML = `
+        <h2 class="text-[24px] font-bold tracking-tight text-[var(--md-sys-color-on-surface)]">Installing Salah OS</h2>
+        <div class="space-y-1">
+          <p class="text-[14px] font-medium text-[var(--md-sys-color-primary)]">${msg}</p>
+          <p class="text-[13px] text-[var(--md-sys-color-on-surface-variant)]">Do not unplug the USB cable.</p>
+        </div>`;
+
+      const radius = 66;
+      const circumference = 2 * Math.PI * radius;
+      const offset = circumference - (percent / 100) * circumference;
+      rightVisual.innerHTML = `
+        <svg width="148" height="148" viewBox="0 0 148 148" class="absolute inset-0 transform -rotate-90">
+          <circle cx="74" cy="74" r="${radius}" stroke="var(--md-sys-color-outline-variant)" stroke-width="8" fill="none" />
+          <circle cx="74" cy="74" r="${radius}" stroke="var(--md-sys-color-primary)" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" class="transition-all duration-300" />
+        </svg>
+        <span class="text-[32px] font-bold tracking-tight text-[var(--md-sys-color-on-surface)] z-10 font-sans">${percent}%</span>`;
+    }
+
+    // Flash / Retry -> ask the device core. No simulation in the renderer.
+    function startFlashingProcess() {
+      if (api) { api.startFlash(); } else { appendConsoleLog('[ui] no backend — startFlash ignored'); }
+    }
+
+    function toggleShellLogs() {
+      const overlay = document.getElementById('shell-overlay');
+      const btn = document.getElementById('logs-toggle-btn');
+      isShellOpen = !isShellOpen;
+      overlay.classList.toggle('hidden', !isShellOpen);
+      btn.classList.toggle('bg-[var(--md-sys-color-primary-container)]', isShellOpen);
+      btn.classList.toggle('text-[var(--md-sys-color-on-primary-container)]', isShellOpen);
+    }
+
+    function appendConsoleLog(line) {
+      const out = document.getElementById('shell-output');
+      if (!out) return;
+      const div = document.createElement('div');
+      div.textContent = line;
+      out.appendChild(div);
+      out.scrollTop = out.scrollHeight;
+    }
+
+    function copyConsoleLogs() {
+      const out = document.getElementById('shell-output');
+      const icon = document.getElementById('copy-icon');
+      const ta = document.createElement('textarea');
+      ta.value = out.innerText;
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      icon.textContent = 'check';
+      setTimeout(() => { icon.textContent = 'content_copy'; }, 2000);
+    }
+
+    function installDrivers() { if (api) api.installDrivers(); }
+    function answerCheck(pass) { if (api) api.answerCheck(pass); }
+    function restoreOriginal() { if (api) api.restoreOriginal(); }
+
+    function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+    function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    function handleWindowClose() { if (api) api.closeWindow(); }
+  </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "version": "0.9.0-test",
+  "dryRun": true,
+  "golden": {
+    "fingerprint": "Allwinner/ceres_b3/ceres-b3:13/TP1A.221005.003/eng.lido.20260708.200502:user/release-keys",
+    "board": "ceres_b3"
+  },
+  "tools": {
+    "adb": "C:/adb-tools/adb.exe",
+    "fastboot": "C:/adb-tools/fastboot.exe"
+  },
+  "images": {
+    "vbmeta_a": "C:/SalahOS/frame-backup/vbmeta_a_noverity.img",
+    "product": "C:/SalahOS/prod-image/product_a_salahos-dev6.img",
+    "stock_product": "C:/SalahOS/prod-image/product_a_stock.img"
+  },
+  "flashVendor": false,
+  "verifyAfter": true,
+  "drivers": {
+    "required": true
+  }
+}
