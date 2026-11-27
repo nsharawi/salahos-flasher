@@ -1,5 +1,5 @@
 {
-  "version": "0.9.0-test",
+  "version": "0.10.0-test",
   "dryRun": false,
   "golden": {
     "fingerprint": "Allwinner/ceres_b3/ceres-b3:13/TP1A.221005.003/eng.lido.20260708.200502:user/release-keys",
@@ -10,7 +10,7 @@
     "fastboot": "C:/adb-tools/fastboot.exe"
   },
   "images": {
-    "product": "C:/SalahOS/prod-image/product_a_salahos-dev8.img",
+    "product": "C:/SalahOS/prod-image/product_a_salahos-dev10.img",
     "stock_product": "C:/SalahOS/prod-image/product_a_stock.img",
     "env_new": "images/env_bl255.img",
     "bootlogo_patch": "images/bootlogo.patch.json"
@@ -21,26 +21,15 @@
   },
   "reference": {
     "knownProducts": [
-      {
-        "sha": "3a672d491dd6552ce766fc43397972cd745d88345d3f45d3464e32fcd872dea7",
-        "blocks": 34709
-      },
-      {
-        "sha": "154cc742f97708cdd3c999c75df5e57376a51e07129ffcd46b1679bf87e3378f",
-        "blocks": 34726
-      },
-      {
-        "sha": "99e378102aec38ec732b42a69a5198399957f47dd9145bbc84a043fb9b9a0ba4",
-        "blocks": 34725
-      },
-      {
-        "sha": "2cb31cc7791932e010706c7abcb085dfc0ad7fc0e733b68132cc40cd42d30a23",
-        "blocks": 34727
-      },
-      {
-        "sha": "b6e62b558d971abb48c00c0640e23b015dae7aa91f78c3f0d7bfa898a0bdfa5a",
-        "blocks": 34727
-      }
+      { "sha": "3a672d491dd6552ce766fc43397972cd745d88345d3f45d3464e32fcd872dea7", "blocks": 34709 },
+      { "sha": "154cc742f97708cdd3c999c75df5e57376a51e07129ffcd46b1679bf87e3378f", "blocks": 34726 },
+      { "sha": "99e378102aec38ec732b42a69a5198399957f47dd9145bbc84a043fb9b9a0ba4", "blocks": 34725 },
+      { "sha": "2cb31cc7791932e010706c7abcb085dfc0ad7fc0e733b68132cc40cd42d30a23", "blocks": 34727 },
+      { "sha": "b6e62b558d971abb48c00c0640e23b015dae7aa91f78c3f0d7bfa898a0bdfa5a", "blocks": 34727 },
+      { "sha": "fb33a7b03410b7c255b6ae178f81ed31d9aa16cfba62228df151d9ee413834f2", "blocks": 34727 },
+      { "sha": "d7430d383571afb6f95855cd98ecb04da3b64d9ed99027846f0916dccf6c57cb", "blocks": 34727 },
+      { "sha": "af4b9805e39d6c75fcf03f78607dc6eea0d1936142d4fe747f09ee18e0714aaf", "blocks": 34729 },
+      { "sha": "1ba97f52f19c38e6955f66e958ee6a311971f807bf9e6d8cdca4d6438370a0cc", "blocks": 34729 }
     ]
   },
   "resetAfterFlash": false
