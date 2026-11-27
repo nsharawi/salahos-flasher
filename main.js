@@ -280,10 +280,11 @@ async function liveFlash(serial, rma) {
   if (!pr.ok) throw new Error('Boot logo: ' + pr.why + '. Nothing was changed.');
   const envBase = fs.readFileSync(imgPath('env_new')), envSha = sha(env);
   const tech = /^[0-9a-f]{64}$/.test(TECHKEY);
-  /* a unit that has run Salah OS keeps the name it already shows (older apps worked it out differently);
-     a new unit gets the name the app will work out from its serial */
-  const had = ((await sh(serial, "grep -o 'frame_name\">[^<]*' /data/data/com.paltech.salahos/shared_prefs/frame.xml 2>/dev/null", 20000)).split('>')[1] || '').trim();
-  const name = /^SalahOS-[0-9A-Z]{4,8}$/.test(had) ? had : frameName(await getprop(serial, 'ro.serialno'));
+  /* the name the app works out from the serial (app 1.0.105 and later always use it, and put it back if an
+     older app saved another) */
+  const sn = await getprop(serial, 'ro.serialno');
+  if (!/^[0-9A-Za-z]{6,40}$/.test(sn)) throw new Error('This frame does not report a serial number. Nothing was changed.');
+  const name = frameName(sn);
   const envNew = tech ? envWithTech(envBase, unitSecret(name)) : envBase;
   if (tech) log('   technician-code secret for ' + name + ': in the boot settings');
   else log('   no techkey.txt beside the flasher: this unit gets no technician-code secret');
