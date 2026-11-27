@@ -439,11 +439,12 @@ async function verifyBoot(serial) {
   await waitFor(async () => /\bdone\s*$/.test(await sh(serial, 'tail -1 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000)), 90000, 3000);
   const lg = await sh(serial, 'tail -20 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000);
   (lg || '(no setup log readable)').split('\n').forEach(l => log('   frame: ' + l));
-  const pm = await sh(serial, 'pm path com.paltech.salahos', 30000);
+  /* a frame that updated itself runs the update over the image's copy; the image's copy still shows as the system codePath */
+  const pm = await sh(serial, 'pm path com.paltech.salahos; dumpsys package com.paltech.salahos | grep codePath=', 30000);
   const home = await sh(serial, 'cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME | grep -m1 packageName', 30000);
   const owner = await sh(serial, 'dpm list-owners', 30000);
   const dev = (await sh(serial, 'ls /product/etc/salahos/dev 2>/dev/null', 20000)) !== '';
-  const v = { seen: true, serial, app: /\/product\/app\/SalahOS\//.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
+  const v = { seen: true, serial, app: /\/product\/app\/SalahOS(\/|$)/m.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
   log('   result: ' + JSON.stringify(v));
   return v;
 }
