@@ -196,17 +196,53 @@ async function push(serial, file, dst, want) {
 
 // The boot pictures: the patch lists the byte ranges the two pictures occupy in a stock bootloader partition,
 // what must be there now, and what goes there. Only those ranges change; the rest stays this unit's own.
+/* A frame given the Salah OS logo before the flasher existed holds the same pictures, but its picture folder
+   carries other file dates. Inside a 32-byte folder entry the dates are bytes 13-19 and 22-25; when only those
+   differ from what this flasher writes, it is the same logo and the current one goes over it. */
+function datesOnly(cur, neu) {
+  if (cur.length !== neu.length || cur.length > 4096) return false;
+  for (let i = 0; i < cur.length; i++) { const k = i % 32; if (cur[i] !== neu[i] && !((k >= 13 && k <= 19) || (k >= 22 && k <= 25))) return false; }
+  return true;
+}
 function patchBootloader(buf, patch) {
   if (buf.length !== patch.size) return { ok: false, why: 'partition size differs' };
   let already = 0;
   for (const r of patch.ranges) {
     const cur = sha(buf.subarray(r.off, r.off + r.len)), neu = Buffer.from(r.new, 'base64');
     if (cur === sha(neu)) { already++; continue; }
-    if (cur !== r.old) return { ok: false, why: 'the pictures are not where a stock frame keeps them (offset ' + r.off + ')' };
+    if (cur !== r.old && !datesOnly(buf.subarray(r.off, r.off + r.len), neu)) return { ok: false, why: 'the pictures are not where a stock frame keeps them (offset ' + r.off + ')' };
     neu.copy(buf, r.off);
   }
   return { ok: true, already: already === patch.ranges.length };
 }
+
+// Technician codes: each unit gets its own secret, HMAC-SHA256(team key, frame name) cut to 20 bytes, kept as one
+// line (salahos_tech=...) in its boot settings, which a factory reset keeps. The frame's boot script hands it to
+// the app; the console works out the same secret from the frame name and shows one-time codes. The frame name is
+// the app's own: "SalahOS-" + the first 30 bits of SHA-256(ro.serialno) in Crockford's alphabet.
+function frameName(serialno) {
+  const A = '0123456789ABCDEFGHJKMNPQRSTVWXYZ', h = crypto.createHash('sha256').update(serialno, 'ascii').digest();
+  const bits = (h[0] * 4194304) + (h[1] << 14) + (h[2] << 6) + (h[3] >> 2); let out = '';
+  for (let i = 5; i >= 0; i--) out += A[Math.floor(bits / Math.pow(32, i)) % 32];
+  return 'SalahOS-' + out;
+}
+/* the team key lives in techkey.txt beside the flasher (never in this repository; the console's Frames page,
+   Flasher key, shows it) */
+const TECHKEY = (() => { try { return fs.readFileSync(path.join(DATA, 'techkey.txt'), 'utf8').trim().toLowerCase(); } catch (e) { return ''; } })();
+function unitSecret(name) { return crypto.createHmac('sha256', Buffer.from(TECHKEY, 'hex')).update(name, 'utf8').digest('hex').slice(0, 40); }
+// u-boot settings: CRC-32 at 0, then the settings from byte 4 to 128 KB, each "key=value\0", ending "\0\0"
+const ENV_SIZE = 0x20000;
+function envWithTech(base, secret) {
+  const b = Buffer.from(base), d = b.subarray(4, ENV_SIZE), parts = [];
+  let i = 1; while (i < d.length) { const z = d.indexOf(0, i); if (z <= i) break; parts.push(d.subarray(i, z).toString('latin1')); i = z + 1; }
+  const kept = parts.filter(x => !x.startsWith('salahos_tech=')).concat(['salahos_tech=' + secret]);
+  const body = Buffer.concat([Buffer.from([0]), Buffer.from(kept.join('\0') + '\0\0', 'latin1')]);
+  if (body.length > d.length) throw new Error('Boot settings would not fit. Nothing was changed.');
+  d.fill(0); body.copy(d, 0);
+  b.writeUInt32LE(crc32(b.subarray(4, ENV_SIZE)), 0);
+  return b;
+}
+function crc32(buf) { let c, crc = 0xFFFFFFFF; for (let n = 0; n < buf.length; n++) { c = (crc ^ buf[n]) & 0xFF; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; crc = (crc >>> 8) ^ c; } return (crc ^ 0xFFFFFFFF) >>> 0; }
 
 async function unitBackupDir(serial) { const d = path.join(DATA, 'backups', serial); fs.mkdirSync(d, { recursive: true }); return d; }
 
@@ -242,8 +278,17 @@ async function liveFlash(serial, rma) {
   const patch = JSON.parse(fs.readFileSync(imgPath('bootlogo_patch'), 'utf8'));
   const blNew = Buffer.from(bl), pr = patchBootloader(blNew, patch);
   if (!pr.ok) throw new Error('Boot logo: ' + pr.why + '. Nothing was changed.');
-  const envNew = fs.readFileSync(imgPath('env_new')), envSha = sha(env);
-  const envTodo = envSha === sha(envNew) ? 'already' : envSha === REF.stockEnv ? 'write' : null;
+  const envBase = fs.readFileSync(imgPath('env_new')), envSha = sha(env);
+  const tech = /^[0-9a-f]{64}$/.test(TECHKEY);
+  /* a unit that has run Salah OS keeps the name it already shows (older apps worked it out differently);
+     a new unit gets the name the app will work out from its serial */
+  const had = ((await sh(serial, "grep -o 'frame_name\">[^<]*' /data/data/com.paltech.salahos/shared_prefs/frame.xml 2>/dev/null", 20000)).split('>')[1] || '').trim();
+  const name = /^SalahOS-[0-9A-Z]{4,8}$/.test(had) ? had : frameName(await getprop(serial, 'ro.serialno'));
+  const envNew = tech ? envWithTech(envBase, unitSecret(name)) : envBase;
+  if (tech) log('   technician-code secret for ' + name + ': in the boot settings');
+  else log('   no techkey.txt beside the flasher: this unit gets no technician-code secret');
+  /* stock, or written by an earlier run (with or without a technician secret): write this unit's settings */
+  const envTodo = envSha === sha(envNew) ? 'already' : (envSha === REF.stockEnv || envSha === sha(envBase) || (env.indexOf('salahos_tech=') > 0 && envSha === sha(envWithTech(envBase, (env.toString('latin1').match(/salahos_tech=([0-9a-f]{40})/) || [])[1] || '')))) ? 'write' : null;
   if (!envTodo) throw new Error('This frame\'s boot settings are not the stock ones the flasher knows. Nothing was changed.');
   log(`   plan: system image ${have === 'current' ? 'already current' : 'write'}; boot logo ${pr.already ? 'already in place' : 'write'}; backlight ${envTodo === 'already' ? 'already in place' : 'write'}`);
 
@@ -256,7 +301,7 @@ async function liveFlash(serial, rma) {
   await push(serial, path.join(bdir, 'bootloader_a.original.img'), T + 'bl.orig.img');
   await push(serial, path.join(bdir, 'env_a.original.img'), T + 'env.orig.img');
   if (!pr.already) await push(serial, blNewFile, T + 'bl.new.img', sha(blNew));
-  if (envTodo === 'write') await push(serial, imgPath('env_new'), T + 'env.new.img', sha(envNew));
+  if (envTodo === 'write') { const envNewFile = path.join(bdir, 'env_a.new.img'); fs.writeFileSync(envNewFile, envNew); await push(serial, envNewFile, T + 'env.new.img', sha(envNew)); }
 
   // ---- write, and read each one back
   const dd = `bs=4096 seek=${REF.productSeek} conv=notrunc`;
@@ -280,7 +325,7 @@ async function liveFlash(serial, rma) {
   if (envTodo === 'write') {
     await sh(serial, `dd if=${T}env.new.img of=/dev/block/by-name/env_a bs=4096 2>/dev/null; sync; echo 3 > /proc/sys/vm/drop_caches`);
     if ((await partSha(serial, 'env_a')) !== sha(envNew)) { await undo(serial); throw new Error('The boot settings did not read back correctly. The frame\'s previous state was written back.'); }
-    log('   backlight setting written and read back');
+    log('   boot settings (backlight' + (tech ? ', technician secret' : '') + ') written and read back');
   }
 
   // ---- restart, see what came up, check the hardware; a returned frame is erased last
@@ -394,11 +439,12 @@ async function verifyBoot(serial) {
   await waitFor(async () => /\bdone\s*$/.test(await sh(serial, 'tail -1 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000)), 90000, 3000);
   const lg = await sh(serial, 'tail -20 /data/local/tmp/salahos-setup.log 2>/dev/null', 20000);
   (lg || '(no setup log readable)').split('\n').forEach(l => log('   frame: ' + l));
-  const pm = await sh(serial, 'pm path com.paltech.salahos', 30000);
+  /* a frame that updated itself runs the update over the image's copy; the image's copy still shows as the system codePath */
+  const pm = await sh(serial, 'pm path com.paltech.salahos; dumpsys package com.paltech.salahos | grep codePath=', 30000);
   const home = await sh(serial, 'cmd package resolve-activity -a android.intent.action.MAIN -c android.intent.category.HOME | grep -m1 packageName', 30000);
   const owner = await sh(serial, 'dpm list-owners', 30000);
   const dev = (await sh(serial, 'ls /product/etc/salahos/dev 2>/dev/null', 20000)) !== '';
-  const v = { seen: true, serial, app: /\/product\/app\/SalahOS\//.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
+  const v = { seen: true, serial, app: /\/product\/app\/SalahOS(\/|$)/m.test(pm), setupDone: /\bdone\s*$/m.test(lg), home: /com\.paltech\.salahos/.test(home), owner: /com\.paltech\.salahos/.test(owner), dev };
   log('   result: ' + JSON.stringify(v));
   return v;
 }
