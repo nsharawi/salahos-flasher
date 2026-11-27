@@ -196,13 +196,21 @@ async function push(serial, file, dst, want) {
 
 // The boot pictures: the patch lists the byte ranges the two pictures occupy in a stock bootloader partition,
 // what must be there now, and what goes there. Only those ranges change; the rest stays this unit's own.
+/* A frame given the Salah OS logo before the flasher existed holds the same pictures, but its picture folder
+   carries other file dates. Inside a 32-byte folder entry the dates are bytes 13-19 and 22-25; when only those
+   differ from what this flasher writes, it is the same logo and the current one goes over it. */
+function datesOnly(cur, neu) {
+  if (cur.length !== neu.length || cur.length > 4096) return false;
+  for (let i = 0; i < cur.length; i++) { const k = i % 32; if (cur[i] !== neu[i] && !((k >= 13 && k <= 19) || (k >= 22 && k <= 25))) return false; }
+  return true;
+}
 function patchBootloader(buf, patch) {
   if (buf.length !== patch.size) return { ok: false, why: 'partition size differs' };
   let already = 0;
   for (const r of patch.ranges) {
     const cur = sha(buf.subarray(r.off, r.off + r.len)), neu = Buffer.from(r.new, 'base64');
     if (cur === sha(neu)) { already++; continue; }
-    if (cur !== r.old) return { ok: false, why: 'the pictures are not where a stock frame keeps them (offset ' + r.off + ')' };
+    if (cur !== r.old && !datesOnly(buf.subarray(r.off, r.off + r.len), neu)) return { ok: false, why: 'the pictures are not where a stock frame keeps them (offset ' + r.off + ')' };
     neu.copy(buf, r.off);
   }
   return { ok: true, already: already === patch.ranges.length };
